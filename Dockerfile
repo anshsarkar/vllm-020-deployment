@@ -7,12 +7,12 @@ WORKDIR /workspace
 
 # install build and runtime dependencies
 COPY requirements.txt requirements.txt
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,target=/mnt/Workspace/docker-deployments/cache/pip \
     pip install -r requirements.txt
 
 # install development dependencies
 COPY requirements-dev.txt requirements-dev.txt
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,target=/mnt/Workspace/docker-deployments/cache/pip \
     pip install -r requirements-dev.txt
 
 # image to build pytorch extensions
@@ -49,7 +49,7 @@ RUN apt-get update -y \
 
 WORKDIR /workspace
 COPY requirements.txt requirements.txt
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,target=/mnt/Workspace/docker-deployments/cache/pip \
     pip install -r requirements.txt
 
 FROM vllm-base AS vllm
@@ -62,7 +62,7 @@ ENTRYPOINT ["python3", "-m", "vllm.entrypoints.api_server"]
 # openai api server alternative
 FROM vllm-base AS vllm-openai
 # install additional dependencies for openai api server
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,target=/mnt/Workspace/docker-deployments/cache/pip \
     pip install accelerate fschat
 
 COPY --from=build /workspace/vllm/*.so /workspace/vllm/
