@@ -41,6 +41,9 @@ class ModelConfig:
         revision: The specific model version to use. It can be a branch name,
             a tag name, or a commit id. If unspecified, will use the default
             version.
+        tokenizer_revision: The specific tokenizer version to use. It can be a
+            branch name, a tag name, or a commit id. If unspecified, will use
+            the default version.
         max_model_len: Maximum length of a sequence (including prompt and
             output). If None, will be derived from the model.
         quantization: Quantization method that was used to quantize the model
@@ -58,6 +61,7 @@ class ModelConfig:
         dtype: str,
         seed: int,
         revision: Optional[str] = None,
+        tokenizer_revision: Optional[str] = None,
         max_model_len: Optional[int] = None,
         quantization: Optional[str] = None,
     ) -> None:
@@ -69,6 +73,7 @@ class ModelConfig:
         self.load_format = load_format
         self.seed = seed
         self.revision = revision
+        self.tokenizer_revision = tokenizer_revision
         self.quantization = quantization
 
         self.hf_config = get_config(model, trust_remote_code, revision)
@@ -98,7 +103,7 @@ class ModelConfig:
         self.tokenizer_mode = tokenizer_mode
 
     def _verify_quantization(self) -> None:
-        supported_quantization = ["awq"]
+        supported_quantization = ["awq", "squeezellm"]
         if self.quantization is None:
             return
         quantization = self.quantization.lower()
@@ -138,7 +143,7 @@ class ModelConfig:
     def get_num_kv_heads(self, parallel_config: "ParallelConfig") -> int:
         """Returns the number of KV heads per GPU worker."""
         # For GPTBigCode & Falcon:
-        # Note: for falcon, when new_decoder_architecture is True, the
+        # NOTE: for falcon, when new_decoder_architecture is True, the
         # multi_query flag is ignored and we use n_head_kv for the number of
         # KV heads.
         falcon_model_types = ["falcon", "RefinedWeb", "RefinedWebModel"]
@@ -160,6 +165,10 @@ class ModelConfig:
         # For LLaMA-2:
         if getattr(self.hf_config, "num_key_value_heads", None) is not None:
             return (self.hf_config.num_key_value_heads //
+                    parallel_config.tensor_parallel_size)
+        # For ChatGLM-2:
+        if getattr(self.hf_config, "multi_query_group_num", None) is not None:
+            return (self.hf_config.multi_query_group_num //
                     parallel_config.tensor_parallel_size)
         total_num_attention_heads = self.hf_config.num_attention_heads
         return total_num_attention_heads // parallel_config.tensor_parallel_size
@@ -263,6 +272,7 @@ class SchedulerConfig:
             iteration.
         max_model_len: Maximum length of a sequence (including prompt
             and generated text).
+        max_paddings: Maximum number of paddings to be added to a batch.
     """
 
     def __init__(
@@ -270,6 +280,7 @@ class SchedulerConfig:
         max_num_batched_tokens: Optional[int],
         max_num_seqs: int,
         max_model_len: int,
+        max_paddings: int,
     ) -> None:
         if max_num_batched_tokens is not None:
             self.max_num_batched_tokens = max_num_batched_tokens
@@ -279,6 +290,7 @@ class SchedulerConfig:
             self.max_num_batched_tokens = max(max_model_len, 2048)
         self.max_num_seqs = max_num_seqs
         self.max_model_len = max_model_len
+        self.max_paddings = max_paddings
         self._verify_args()
 
     def _verify_args(self) -> None:
@@ -340,15 +352,6 @@ def _get_and_verify_dtype(
             # Casting between float16 and bfloat16 is allowed with a warning.
             logger.warning(f"Casting {config_dtype} to {torch_dtype}.")
 
-    # Check if the GPU supports the dtype.
-    if torch_dtype == torch.bfloat16:
-        compute_capability = torch.cuda.get_device_capability()
-        if compute_capability[0] < 8:
-            gpu_name = torch.cuda.get_device_name()
-            raise ValueError(
-                "Bfloat16 is only supported on GPUs with compute capability "
-                f"of at least 8.0. Your {gpu_name} GPU has compute capability "
-                f"{compute_capability[0]}.{compute_capability[1]}.")
     return torch_dtype
 
 
@@ -365,6 +368,8 @@ def _get_and_verify_max_len(
         "n_positions",
         # MPT
         "max_seq_len",
+        # ChatGLM2
+        "seq_length",
         # Others
         "max_sequence_length",
         "max_seq_length",
@@ -391,6 +396,9 @@ def _get_and_verify_max_len(
     if rope_scaling is not None:
         assert "factor" in rope_scaling
         scaling_factor = rope_scaling["factor"]
+        if rope_scaling["type"] == "yarn":
+            derived_max_model_len = rope_scaling[
+                "original_max_position_embeddings"]
         derived_max_model_len *= scaling_factor
 
     if max_model_len is None:

@@ -27,8 +27,10 @@ class EngineArgs:
     gpu_memory_utilization: float = 0.90
     max_num_batched_tokens: Optional[int] = None
     max_num_seqs: int = 256
+    max_paddings: int = 256
     disable_log_stats: bool = False
     revision: Optional[str] = None
+    tokenizer_revision: Optional[str] = None
     quantization: Optional[str] = None
 
     def __post_init__(self):
@@ -55,6 +57,13 @@ class EngineArgs:
             type=str,
             default=None,
             help='the specific model version to use. It can be a branch '
+            'name, a tag name, or a commit id. If unspecified, will use '
+            'the default version.')
+        parser.add_argument(
+            '--tokenizer-revision',
+            type=str,
+            default=None,
+            help='the specific tokenizer version to use. It can be a branch '
             'name, a tag name, or a commit id. If unspecified, will use '
             'the default version.')
         parser.add_argument('--tokenizer-mode',
@@ -148,6 +157,10 @@ class EngineArgs:
                             type=int,
                             default=EngineArgs.max_num_seqs,
                             help='maximum number of sequences per iteration')
+        parser.add_argument('--max-paddings',
+                            type=int,
+                            default=EngineArgs.max_paddings,
+                            help='maximum number of paddings in a batch')
         parser.add_argument('--disable-log-stats',
                             action='store_true',
                             help='disable logging statistics')
@@ -155,7 +168,7 @@ class EngineArgs:
         parser.add_argument('--quantization',
                             '-q',
                             type=str,
-                            choices=['awq', None],
+                            choices=['awq', 'squeezellm', None],
                             default=None,
                             help='Method used to quantize the weights')
         return parser
@@ -175,7 +188,8 @@ class EngineArgs:
                                    self.tokenizer_mode, self.trust_remote_code,
                                    self.download_dir, self.load_format,
                                    self.dtype, self.seed, self.revision,
-                                   self.max_model_len, self.quantization)
+                                   self.tokenizer_revision, self.max_model_len,
+                                   self.quantization)
         cache_config = CacheConfig(
             self.block_size, self.gpu_memory_utilization, self.swap_space,
             getattr(model_config.hf_config, 'sliding_window', None))
@@ -184,7 +198,8 @@ class EngineArgs:
                                          self.worker_use_ray)
         scheduler_config = SchedulerConfig(self.max_num_batched_tokens,
                                            self.max_num_seqs,
-                                           model_config.max_model_len)
+                                           model_config.max_model_len,
+                                           self.max_paddings)
         return model_config, cache_config, parallel_config, scheduler_config
 
 
